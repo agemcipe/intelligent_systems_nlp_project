@@ -2,148 +2,86 @@
 title: "Intelligent Systems - Natural Language Processing Project"
 author: "Jonathan Haas"
 output: 
-  pdf_document:
+  bookdown::pdf_document2: #requires bookdown package
     fig_caption: yes
+    toc: false
+    number_sections: false 
 
 ---
-```{r import}
+```{r import, echo=FALSE, warning=FALSE, results='hide'}
 library(here)
 source(here("utils.R"))
-```
 
-```{r echo=FALSE, warning=FALSE, results='hide'}
-########################## functions ##########################
-
-get_json_ls_from_file <- function(file_name, num_lines = -1L) {
-    json_file <- here("input", file_name)
-
-    # verify file exists
-    if (!file.exists(json_file)) {
-        print("Input json file does not exist")
-        quit(status = 1)
-    }
-
-    # read file
-    print(paste("Reading file:", json_file))
-    file_con <- file(json_file)
-    lines <- readLines(con = file_con, n = num_lines)
-    close(file_con)
-
-    num_docs <- length(lines)
-
-    print(paste("Number of Lines read:", num_docs))
-
-    json_ls <- vector("list", length = num_docs)
-    for (i in 1:num_docs) {
-        json_ls[[i]] <- fromJSON(json_str = lines[i])
-    }
-    return(json_ls)
-}
-
-get_tdm_from_json_ls <- function(json_ls) {
-    # create corpus
-    abstract_vec <- vector("character", length = length(json_ls))
-    for (i in 1:length(json_ls)) {
-        abstract_vec[[i]] <- json_ls[[i]]$abstract
-    }
-
-    corpus <- tm::Corpus(x = tm::VectorSource(
-        abstract_vec
-    ))
-
-    print(paste("Creating TDM from", length(json_ls), "Documents"))
-    # Create TermDocumentMatrix (Vector Word Model)
-    tdm <- tm::TermDocumentMatrix(
-        corpus,
-        control = list(
-            weighting = tm::weightTfIdf,
-            removePunctuation = TRUE,
-            stopwords = TRUE,
-            stripWhitespace = TRUE,
-            stemming = TRUE,
-            removeNumbers = TRUE
-        )
-    )
-
-    return(tdm)
-}
-
-
-find_similar_papers <- function(doc_index, tdm) {
-    # check that doc_index exists
-
-    # calculate cosine similarity vector
-    cosine_similarity <- (
-        slam::crossprod_simple_triplet_matrix(x = tdm, y = tdm[, doc_index])
-        / (sqrt((col_sums(tdm^2) %*% t(col_sums(tdm[, doc_index]^2)))))
-    )
-
-    cosine_similarity <- sort.int(
-        cosine_similarity[, 1],
-        index.return = TRUE,
-        decreasing = TRUE
-    )
-}
-
-print_doc_info <- function(doc_id) {
-    cat(
-        paste(
-            "  doc_id:", doc_id, "\n",
-            "  Title:", json_ls[[doc_id]]$title, "\n",
-            "Authors:", json_ls[[doc_id]]$authors, "\n",
-            "Journal:", json_ls[[doc_id]]$"journal-ref", "\n"
-        )
-    )
-}
-
-
-print_doc_infos <- function(doc_ids) {
-    for (doc_id in doc_ids) {
-        print_doc_info(as.numeric(doc_id))
-        cat("-----------------------------\n")
-    }
-}
-
-########################## reading the json file ##########################
-
+###### reading json file ######
+unzip_data("arxiv_archive.zip")
 json_ls <- get_json_ls_from_file("head_arxiv.json")
 ```
 
+## Preface
+
+This report has been written in [R Markdown](https://rmarkdown.rstudio.com/). Not all source code that is involved in generating this report is visible in this report. Only the most relevant code and output is displayed to condense this report to the page limit for this assignment. I apologize sincerely that this page limit is not met. 
+
+The code for this project can be found under: [https://github.com/agemcipe/intelligent_systems_nlp_project]( https://github.com/agemcipe/intelligent_systems_nlp_project)
+
 ## Problem Description
 
-Nowadays there are more than 10,000 submissions per month.
-How does one find papers written on the same or similar topic? This question I want to approach with this small NLP project.
+Nowadays there are more than [10,000 submissions per month](https://arxiv.org/stats/monthly_submissions) to the open access repository arxiv. With such a fast growing repository it is becomes impossible to index and catalog all papers "by hand". For this purpose academic search engines were created with allow for efficient searching in paper repositories like arxiv. One usually asks these search engines "What are the most relevant papers for this search term?". But instead one might come across a situation where one wants to ask "What are papers similar in topic to this paper?". This question I want to address with this project.
 
-### Background
+### Goal
+The goal of this project is simple and can be summarized in one sentence: 
 
-The idea for this project originally came from another class. In the course Big Data Visualizations we have to do a project in which the goal is to analyze a data set. My team has chosen this data set and visualized the "network" structure of the submission by building a collaboration graph in which the nodes is a single author and the edge weight between two nodes is the number of papers they have authored together. This does not use the text data provided in the data set at all. It came to my mind that the abstract of the papers would be interesting on its own to be used in a data science project and 
-
+*For a given paper find similar papers based on the abstract in the arxiv data set* 
 
 ### The Arxiv Data Set
 
-The Arxiv Data set is provided free of charge and contains the metadata of more than 1.7 million papers in the STEM fields. 
+The Arxiv Data set is provided free of charge and contains the metadata of more than 1.7 million papers in the STEM fields. The metadata is characterized by 14 variables such as title, authors, comments and abstract, which I will use in this project.
 
-### Goal
-The goal of this project summarized in one sentence is: 
-
-*For a given paper find the similar papers based on the abstract in the arxiv data set* 
-
-## Approach and Experiment
+## Approach
 
 What does it mean for two scientific papers to be similar?
-Intuitively one could say that two papers are similar when the same words / terms are used in their abstract. For example, two papers in which both the terms "photon", "analysis", "LHC" and "collide" occur might be similar in topic to each other.
+Intuitively one could say that two papers are similar when the same terms are used in their abstracts. For example, two papers in which both the terms "photon", "analysis", "LHC" and "collide" occur might be similar in topic to each other.
 
-Building on this intuition, I will use the Vector Space Model to turn the abstracts of papers into a vectors representing the words/terms. Each document is then equivalent to a vector in the resulting term-vector space. One can then use a similarity measure in this vector space to compare two vectors. I will use the [cosine similarity](https://en.wikipedia.org/wiki/Cosine_similarity) which gives an output between 0 and 1 with 0 meaning the two vectors are very different and values close to 1 meaning the two vectors are very similar.
+Building on this intuition, I will use the Vector Space Model to turn the abstracts of papers into a vectors representing the terms. Each document is then equivalent to a vector in the resulting term-vector space. One can then use a similarity measure in this vector space to compare two vectors. I will use the [cosine similarity](https://en.wikipedia.org/wiki/Cosine_similarity) which gives an output between 0 and 1 with 0 meaning the two vectors are very different and values close to 1 meaning the two vectors are very similar.
 
 The entries of the term-vectors can be weighted differently. I have experimented with different weightings during the development of this project:
+
   * Binary 
   * Term frequency (TF)
   * Term frequency - Inverse document frequency (TF-IDF)
+
 and have found that the TF-IDF weighting works best for this approach.
 
-Additionally I also tested the removal of stop words, number and punctuation as well as the usage of stemming.
+### Challenges
 
-The final Term-Document-Matrix gets created in the following way:
+I want to briefly describe the different challenges that come with this approach and data set.
+
+#### Evaluation of Results
+
+The main challenge one faces with this approach is the question: How does one verify that two vectors with a high cosine similarity indeed translate to the two documents being similar? One way of checking if the approach is working, would be to have a set of documents in the arxiv data set for which one knows that they are indeed similar (or different). Unfortunately such a set is not available to me. To still test the results in this project I will try to answer the following two questions:
+
+  * What are the two most similar documents in the data set?
+  * For randomly given document, what are the most similar documents in the data set? 
+
+I will make use of other available metadata in the data set to try to answer these questions.
+
+
+#### Memory
+
+Another challenge when dealing with this particular data set is its size. Loading the complete data set to memory and executing computations on it is not feasible on a regular laptop with 8GB of memory. Trying to find the highest cosine similarity value within the data set means comparing all vectors with each other. This results in a matrix with $(1.6\ mio)^2 = 2.56\ mio$ entries. Even for 100,000 documents R kindly tells us that executing the matrix multiplication is not possible:
+
+ ```
+ Error: cannot allocate vector of size 74.5 Gb
+ ```
+
+#### Formulas, Numbers and Special Characters
+
+Since all the papers are from STEM fields it comes to no surprise that formulas, numbers and special characters such as greek symbols occur frequently in the abstract. I use standard techniques to remove these, however this can lead to non-human understandble terms. For example:
+The formula $\frac{2 * a}{a + c}$ written in latex turns into the term *fracaac* when removing special characters and numbers. Most of the terms resulting from formulas will be very sparse and thus adding little of value to reaching the goal. To tackle this problem terms that only occur in a single document are removed.
+
+### Term-Document-Matrix
+
+The central Term-Document-Matrix used in the further analysis gets created in the following way
+
 ```{r eval=FALSE, echo=TRUE}
 tdm <- tm::TermDocumentMatrix(
     corpus,
@@ -155,41 +93,18 @@ tdm <- tm::TermDocumentMatrix(
         stemming          = TRUE,
         removeNumbers     = TRUE
     )
+
+# remove Terms only occuring in a single document
+removeSparseTerms(tdm, sparse = (1 - 1 / ncol(tdm)))
 ```
-
-### Challenges
-
-I want to briefly describe the different challenges that this approach / dataset bears.
-
-#### Evaluation of Results
-
-The main challenge one faces with that approach is the question: How does one verify that the approach is actually working? One way of checking that the approach is indeed working, would be to have a set of papers in the arxiv data set for which one knows that they are indeed similar or different. Unfortunately such a set is not available to me. To still test the results in this project I will try to answer the following two questions:
-  - What are the two most similar documents in the data set?
-  - For randomly given document, what are the most similar documents in the data set? 
-
-I will make use of other metadata that is available to try to answer these questions.
-
-
-#### Memory
-
-Another challenge when dealing with this particular data set was its size. Loading the complete data set to memory and executing computations on it, which requires copying elements, is not feasible on a regular laptop with 8GB of memory. Trying to find the highest cosine-similarity value within the data set means comparing all vectors with each other. This results in a matrix with $(1.6 million)^2 = 2.56 million$ entries. Even for 100,000 documents R kindly tells us that executing the matrix multiplication is not possible:
-
- ```
- Error: cannot allocate vector of size 74.5 Gb
- ```
-
-#### Formulas, Numbers and Special Characters
-
-Since all the papers are from STEM fields it comes to no surprise that formulas, numbers and special characters such as greek symbols occur frequently in the abstract. I will use standard techniques to remove these, however this can lead to non-human understandble terms. For example:
-The formula $\frac{2 * a}{a + c}$ written in latex turns into the term *fracaac* when removing special characters and numbers. Most of the terms resulting from formulas will be sparse and adding little of value to reaching our goal.
 
 ## Analysis and Evaluation
 
-Here I want to represent some of the result from this project.
+Here I want to represent some of the result from this project. 
 
 ### The two most similar documents
 
-As a "sanity-check" of this project let's look for the two most similar documents, meaning the two documents with the highest cosine-similarity overall and check if these documents intuitively are similar. As described above the amount of memory needed to do this analysis on the whole data set is not available to me. Therefore I have worked on a subset (the first 1000 documents) of the data.
+As a "sanity-check" of this project I want to look for the two most similar documents, meaning the two documents with the highest overall cosine similarity and check if these documents intuitively are similar. As described above the amount of memory needed to do this analysis on the whole data set is not available to me. Therefore I have worked on a subset (the first 1000 documents) of the data.
 ```{r echo=FALSE, warning=FALSE, results='hide'}
 tdm <- get_tdm_from_json_ls(json_ls[1:1000])
 ```
@@ -208,9 +123,9 @@ most_similar <- which(
 
 print_doc_infos(row.names(most_similar))
 ```
-We find that two documents, 783 and 772, are the most similar according to the cosine distance. Looking at the titles of the papers one can already assume that these papers cover similar topics. To further check our assumptions lets visualize the terms that occur in each paper.
+The two documents, 783 and 772, are the most similar according to the cosine similarity. By looking at the titles of the papers one can already assume that these papers cover similar topics. This assumption is further strengthened by the fact that the papers also put in the same category. To further check this assumptions I visualize the terms that occur in each paper.
 
-```{r most_sim, echo=FALSE, show=TRUE, fig.cap="Heatmap of the two most similar Papers"}
+```{r mostSim, echo=FALSE, show=TRUE, fig.cap="Terms of the two most similar Papers"}
 m <- melt(as.matrix(tdm[, c(most_similar[1:2])]), value.name = "tf_idf")
 m <- m[m$"tf_idf" > 0.1, ]
 m$Terms <- droplevels(m$Terms)
@@ -226,14 +141,16 @@ ggplot(m, aes(
     xlab("Docs") +
     theme(panel.background = element_blank())
 ```
-We can see that the papers indeed have the same terms occuring. Thus we conclude that our metric worked for the most similar papers. Of course what we do not know that these are indeed the most similar papers or just two similar papers and there is another pair of papers that is actually more similar to each other.
+
+
+By looking at Figure \@ref(fig:mostSim) one can see that the papers indeed have the same terms occuring. With that one can conclude that the cosine similarity worked for these papers. The papers with the highest cosine similarity indeed appear to be about a similar topic. Of course, what we do not know with this short analysis is that these two papers are indeed the **most** similar papers in the data set or just two similar papers and there is another pair of papers that is actually more similar to each other.
 
 ### Similar documents for a random document
 
 ```{r echo=FALSE, warning=FALSE, results='hide'}
 tdm <- get_tdm_from_json_ls(json_ls)
 ```
-Next we want to pick a random document and find the most similar ones. For that we extend our search over a subset of 200,000 documents. We want to find the 4 most similar papers for the randomly picked document number *54123*.
+Next I want to pick a random document and take a look at the most similar ones according to the cosine similarity. For that I extend the search over a subset of 200,000 documents. This is feasiable because now I only have to compare one document with the other 199,999 documents. I have picked the document number  **54123** and will look at the 4 documents with the highest cosine similarity.
 ```{r echo=FALSE, show=TRUE}
 doc_id <- 57113
 num_of_docs_to_show <- 3
@@ -241,9 +158,10 @@ num_of_docs_to_show <- 3
 most_similar <- find_similar_papers(doc_id, tdm)
 print_doc_infos(most_similar$ix[1:(num_of_docs_to_show + 1)])
 ```
-From a look at the titles of the papers we could guess that all these papers about electromagnetic waves. Let's also look at the most relevant terms in that occur in the different documents.
+From a look at the titles of the papers one could guess that all these papers are about electromagnetic waves. However the fact, that they have different categories is maybe a hint that even though the papers have the same terms, but they have a different meaning. For example document 54123 has the category gr-qc (General Relativity and Quantum Cosmology) while document 142871 has the category math-ph (Mathematical Physic).
+To further investiage one can look at the most relevant terms in that occur in the different documents.
 
-```{r rand_sim, echo=FALSE, show=TRUE, fig.width=10,fig.height=14, fig.cap="Heatmap for document 57113 and the 3 most similar ones"}
+```{r randSim, echo=FALSE, show=TRUE, fig.width=10,fig.height=14, fig.cap="Terms appearing in document 57113 and the 3 most similar ones"}
 m <- melt(
     as.matrix(
         tdm[, c(most_similar$ix[1:(num_of_docs_to_show + 1)])]
@@ -265,4 +183,8 @@ ggplot(m, aes(
     theme(panel.background = element_blank())
 ```
 
-We note that compared to the analysis of the 2 most similar papers above the heatmap is already sparser and there are less terms overlapping. The only term that occures in all 4 documents is "*wave*". This of course unfortunately does not tell us much, since "*wave*" is a pretty generic term that is used throughout physics. We can therefore not reliably conclude from the cosine similarity alone that the 3 documents are indeed very similar. However I assume the 4 papers are still more similar than picking 4 completely random papers from the data set.
+By looking at Figure \@ref(fig:randSim) and comparing it to the analysis of the 2 most similar papers in Figure \@ref(fig:mostSim) is already sparser and there are less terms overlapping. The only term that occures in all 4 documents is "*wave*". This of course unfortunately does not tell us much, since "*wave*" is generic term that is used throughout physics. I can therefore not reliably conclude from the cosine similarity alone that the 3 documents are indeed very similar or have the same topic. However I assume the 4 papers are still more similar than picking 4 completely random papers from the data set.
+
+## Conclusion
+
+With this short project I wanted to see if by using a simple tool like the Vector Space model one can already achieve useful results on a real world data set. From the two short analysis I conclude that this is possible but with limited results. Naturally, for a reliable evaluation and conclusion one has to check a far greater number of documents and see if the result matches the expectation. I am confident that the approach outlined in this project can be further improved, for example by using n-grams, to reach a satisfying result.

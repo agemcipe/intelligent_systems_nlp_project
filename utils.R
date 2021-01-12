@@ -12,7 +12,16 @@ library(dplyr)
 ########################## functions ##########################
 
 unzip_data <- function(file_name) {
-    # TODO: unzip file
+    output_file <- here("input", "head_arxiv.json")
+
+    # check if resulting output already exists
+    if (file.exists(output_file)) {
+        print("Unzipped json file already exists")
+    }
+    else {
+        zip_file <- here("input", file_name)
+        unzip(zip_file, exdir = here("input"))
+    }
 }
 
 
@@ -67,12 +76,20 @@ get_tdm_from_json_ls <- function(json_ls) {
         )
     )
 
+    removeSparseTerms(tdm, sparse = (1 - 1 / (ncol(tdm))))
+
     return(tdm)
 }
 
 
 find_similar_papers <- function(doc_index, tdm) {
     # check that doc_index exists
+    if (
+        (doc_index < 1) || (doc_index > ncol(tdm))
+    ) {
+        print(paste("doc_index", doc_index, "not in tdm"))
+        return()
+    }
 
     # calculate cosine similarity vector
     cosine_similarity <- (
